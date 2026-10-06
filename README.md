@@ -26,11 +26,28 @@ is used to look up the creation date of each pull request.
 
 ## Usage
 
-Store your session cookie once. This is the value of the `user_session`
-cookie for github.com, which you can copy from the browser developer tools
-under Application > Cookies. It is kept in the system keychain.
+Import your GitHub session cookie once, from a browser that is logged in to
+github.com as an owner of the organization:
 
-    pr-origin --set-cookie
+    pr-origin --from-browser
+
+This reads Chrome by default. Name another browser to use it instead, for
+example `pr-origin --from-browser firefox`. The supported names are listed in
+`pr-origin --help`. The browser can stay open. The cookie is copied into the
+system keychain and is never printed.
+
+Chromium-based browsers encrypt their cookies with a key that is kept in the
+macOS keychain, so macOS asks for your login password before the tool can read
+it. Choosing "Allow" grants access for that one run. "Always Allow" lets the
+Python interpreter read the browser's cookie key without asking again. Firefox
+stores cookies unencrypted and does not prompt.
+
+Run the same command again whenever the tool reports that the cookie has
+expired.
+
+Alternatively, `pr-origin --set-cookie` prompts for the value of the
+`user_session` cookie for github.com, which you can copy from the browser
+developer tools under Application > Cookies.
 
 Then look up pull requests by number, `OWNER/REPO#NUMBER`, or URL:
 
@@ -72,6 +89,7 @@ appends the agent name to its user agent.
 
 ## Tests
 
-    uv run --with pytest --with requests --with beautifulsoup4 --with keyring pytest
+    uv run --with pytest --with requests --with beautifulsoup4 --with keyring --with rookiepy pytest
 
-The tests use mocked audit log pages and do not contact GitHub.
+The tests use mocked audit log pages and a mocked browser and keychain. They
+do not contact GitHub or read any real cookies.

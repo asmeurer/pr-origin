@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["requests", "beautifulsoup4", "keyring"]
+# dependencies = ["requests", "beautifulsoup4", "keyring", "rookiepy"]
 # ///
 """
 Report which client opened a GitHub pull request: a browser, the GitHub CLI,
@@ -15,15 +15,16 @@ organization owner. The endpoint is undocumented and may change.
 
 Usage:
 
-    pr-origin --set-cookie          # store your github.com session cookie
+    pr-origin --from-browser        # import your github.com session cookie
     pr-origin 30548 30566           # PRs in the default repo
     pr-origin https://github.com/sympy/live/pull/123
     pr-origin --export export-sympy-123.json 30548
 
-The cookie is the value of the "user_session" cookie for github.com (browser
-developer tools > Application > Cookies). It is stored in the system
-keychain. With --export, a JSON export downloaded from the audit log page is
-used instead and no cookie is needed.
+--from-browser copies the github.com session cookie out of a browser that is
+logged in to GitHub (Chrome by default) into the system keychain.
+--set-cookie prompts for the value of the "user_session" cookie instead. With
+--export, a JSON export downloaded from the audit log page is used and no
+cookie is needed.
 """
 
 import argparse
@@ -37,17 +38,27 @@ from urllib.parse import parse_qs, urlparse
 
 import keyring
 import requests
+import rookiepy
 from bs4 import BeautifulSoup
 
 DEFAULT_REPO = "sympy/sympy"
 KEYRING_SERVICE = "pr-origin"
-KEYRING_USERNAME = "github.com user_session"
+KEYRING_USERNAME = "github.com session cookies"
+SESSION_COOKIE = "user_session"
+SAME_SITE_COOKIE = "__Host-user_session_same_site"
+DEFAULT_BROWSER = "chrome"
+BROWSERS = (
+    "arc", "brave", "chrome", "chromium", "edge", "firefox", "librewolf",
+    "opera", "opera_gx", "safari", "vivaldi",
+)
 GITHUB_CLI_OAUTH_APP_ID = "1157143"
 RESULTS_MARKER = "Filter audit logs"
 
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)")
 PR_SHORT_RE = re.compile(r"^([^/\s]+/[^/#\s]+)#(\d+)$")
 AGENT_RE = re.compile(r"\bAgent/(\S+)")
+# The characters allowed in a cookie value by RFC 6265.
+COOKIE_VALUE_RE = re.compile(r"[!#-+\--:<-\[\]-~]+")
 
 
 def parse_pr_reference(reference, default_repo):
@@ -146,7 +157,7 @@ def iter_audit_entries(session, org, query):
                 f"GitHub returned HTTP {response.status_code} for the {org} "
                 "audit log. The stored session cookie is probably expired, "
                 "or the account is not an owner of the organization. Run "
-                "'pr-origin --set-cookie' to store a fresh cookie."
+                "'pr-origin --from-browser' to import a fresh cookie."
             )
         soup = BeautifulSoup(response.text, "html.parser")
         entries = list(parse_entries(soup))
@@ -163,12 +174,12 @@ def iter_audit_entries(session, org, query):
         params = {"q": query, "after": after}
 
 
-def make_session(cookie):
+def make_session(cookies):
     session = requests.Session()
     session.headers["User-Agent"] = "pr-origin (audit log lookup script)"
     session.headers["Accept"] = "text/html,application/xhtml+xml"
-    for name in ("user_session", "__Host-user_session_same_site"):
-        session.cookies.set(name, cookie, domain="github.com", secure=True)
+    for name, value in cookies.items():
+        session.cookies.set(name, value, domain="github.com", secure=True)
     session.cookies.set("logged_in", "yes", domain=".github.com", secure=True)
     return session
 
@@ -224,24 +235,53 @@ def print_summary(summary):
     print(f"  auth:       {summary['auth']}")
 
 
+def store_cookies(cookies):
+    for name, value in cookies.items():
+        if not COOKIE_VALUE_RE.fullmatch(value):
+            raise ValueError(
+                f"The {name} cookie value is empty or contains characters "
+                "that are not valid in a cookie."
+            )
+    keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, json.dumps(cookies))
+    print("Stored the github.com session cookie in the system keychain.")
+
+
 def set_cookie():
     cookie = getpass.getpass(
-        'Value of the github.com "user_session" cookie (input is hidden): '
+        f'Value of the github.com "{SESSION_COOKIE}" cookie (input is hidden): '
     ).strip()
-    if not cookie:
-        raise ValueError("No cookie value was entered.")
-    keyring.set_password(KEYRING_SERVICE, KEYRING_USERNAME, cookie)
-    print("Stored the session cookie in the system keychain.")
+    store_cookies({SESSION_COOKIE: cookie, SAME_SITE_COOKIE: cookie})
 
 
-def get_cookie():
-    cookie = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-    if cookie is None:
+def read_browser_cookies(browser):
+    return getattr(rookiepy, browser)(["github.com"])
+
+
+def import_cookies_from_browser(browser):
+    cookies = {}
+    for cookie in read_browser_cookies(browser):
+        if cookie["domain"].lstrip(".") != "github.com":
+            continue
+        if cookie["name"] in (SESSION_COOKIE, SAME_SITE_COOKIE):
+            cookies[cookie["name"]] = cookie["value"]
+    if SESSION_COOKIE not in cookies:
         raise RuntimeError(
-            "No session cookie is stored. Run 'pr-origin --set-cookie' first, "
-            "or pass --export with a downloaded audit log export."
+            f"No github.com {SESSION_COOKIE} cookie was found in {browser}. "
+            "Log in to github.com in that browser, name a different browser, "
+            "or use --set-cookie."
         )
-    return cookie
+    cookies.setdefault(SAME_SITE_COOKIE, cookies[SESSION_COOKIE])
+    store_cookies(cookies)
+
+
+def get_cookies():
+    stored = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
+    if stored is None:
+        raise RuntimeError(
+            "No session cookie is stored. Run 'pr-origin --from-browser' "
+            "first, or pass --export with a downloaded audit log export."
+        )
+    return json.loads(stored)
 
 
 def main():
@@ -258,6 +298,12 @@ def main():
         "of querying github.com")
     parser.add_argument("--json", action="store_true",
         help="print one JSON object per pull request")
+    parser.add_argument("--from-browser", nargs="?", const=DEFAULT_BROWSER,
+        choices=BROWSERS, metavar="BROWSER",
+        help="copy the github.com session cookie from a browser that is "
+        "logged in to GitHub into the system keychain. BROWSER is one of "
+        "%(choices)s (default: %(const)s). The operating system may ask for "
+        "permission to read the browser's cookie encryption key.")
     parser.add_argument("--set-cookie", action="store_true",
         help="prompt for the github.com user_session cookie and store it in "
         "the system keychain")
@@ -265,13 +311,15 @@ def main():
         help="remove the stored session cookie from the system keychain")
     args = parser.parse_args()
 
+    if args.from_browser:
+        import_cookies_from_browser(args.from_browser)
     if args.set_cookie:
         set_cookie()
     if args.delete_cookie:
         keyring.delete_password(KEYRING_SERVICE, KEYRING_USERNAME)
         print("Removed the session cookie from the system keychain.")
     if not args.pull_requests:
-        if args.set_cookie or args.delete_cookie:
+        if args.from_browser or args.set_cookie or args.delete_cookie:
             return 0
         parser.error("no pull requests given")
 
@@ -281,7 +329,7 @@ def main():
         export = load_export(args.export)
         session = None
     else:
-        session = make_session(get_cookie())
+        session = make_session(get_cookies())
 
     missing = 0
     for repo, number in references:

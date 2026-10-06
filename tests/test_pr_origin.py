@@ -165,3 +165,96 @@ def test_load_export(tmp_path):
     summary = pr_origin.summarize("sympy/sympy", 100, loaded["https://github.com/sympy/sympy/pull/100"])
     assert summary["kind"] == "gh-cli"
     assert summary["auth"] == "OAuth access token (GitHub CLI OAuth app)"
+
+
+class FakeKeyring:
+    def __init__(self):
+        self.passwords = {}
+
+    def set_password(self, service, username, password):
+        self.passwords[service, username] = password
+
+    def get_password(self, service, username):
+        return self.passwords.get((service, username))
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch):
+    fake = FakeKeyring()
+    monkeypatch.setattr(pr_origin, "keyring", fake)
+    return fake
+
+
+def browser_cookie(name, value, domain="github.com"):
+    return {"name": name, "value": value, "domain": domain, "path": "/",
+            "secure": True, "http_only": True, "expires": None}
+
+
+def test_import_cookies_from_browser(monkeypatch, fake_keyring):
+    requested = []
+
+    def read(browser):
+        requested.append(browser)
+        return [
+            browser_cookie("logged_in", "yes", ".github.com"),
+            browser_cookie("user_session", "wrong-site", "gist.github.com"),
+            browser_cookie("user_session", "abc_DEF-123"),
+            browser_cookie("__Host-user_session_same_site", "same_SITE-456"),
+        ]
+
+    monkeypatch.setattr(pr_origin, "read_browser_cookies", read)
+    pr_origin.import_cookies_from_browser("firefox")
+    assert requested == ["firefox"]
+    assert pr_origin.get_cookies() == {
+        "user_session": "abc_DEF-123",
+        "__Host-user_session_same_site": "same_SITE-456",
+    }
+
+
+def test_import_cookies_without_same_site_cookie(monkeypatch, fake_keyring):
+    monkeypatch.setattr(pr_origin, "read_browser_cookies",
+                        lambda browser: [browser_cookie("user_session", "abc")])
+    pr_origin.import_cookies_from_browser("chrome")
+    assert pr_origin.get_cookies() == {
+        "user_session": "abc",
+        "__Host-user_session_same_site": "abc",
+    }
+
+
+def test_import_cookies_not_logged_in(monkeypatch, fake_keyring):
+    monkeypatch.setattr(pr_origin, "read_browser_cookies",
+                        lambda browser: [browser_cookie("logged_in", "no", ".github.com")])
+    with pytest.raises(RuntimeError, match="No github.com user_session cookie"):
+        pr_origin.import_cookies_from_browser("chrome")
+    assert fake_keyring.passwords == {}
+
+
+@pytest.mark.parametrize("value", ["", "\x8f\x02garbage", "has space", 'quoted"value', "semi;colon"])
+def test_invalid_cookie_value_is_not_stored(monkeypatch, fake_keyring, value):
+    monkeypatch.setattr(pr_origin, "read_browser_cookies",
+                        lambda browser: [browser_cookie("user_session", value)])
+    with pytest.raises(ValueError):
+        pr_origin.import_cookies_from_browser("chrome")
+    assert fake_keyring.passwords == {}
+
+
+def test_set_cookie_prompts_and_stores(monkeypatch, fake_keyring):
+    monkeypatch.setattr(pr_origin.getpass, "getpass", lambda prompt: "  abc123\n")
+    pr_origin.set_cookie()
+    assert pr_origin.get_cookies() == {
+        "user_session": "abc123",
+        "__Host-user_session_same_site": "abc123",
+    }
+
+
+def test_get_cookies_missing(fake_keyring):
+    with pytest.raises(RuntimeError, match="--from-browser"):
+        pr_origin.get_cookies()
+
+
+def test_make_session_sends_stored_cookies():
+    session = pr_origin.make_session({"user_session": "abc", "__Host-user_session_same_site": "def"})
+    sent = {c.name: (c.value, c.domain) for c in session.cookies}
+    assert sent["user_session"] == ("abc", "github.com")
+    assert sent["__Host-user_session_same_site"] == ("def", "github.com")
+    assert sent["logged_in"] == ("yes", ".github.com")
