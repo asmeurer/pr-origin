@@ -1,0 +1,58 @@
+.pr-origin-label {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 7px;
+  border: 1px solid;
+  border-radius: 2em;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.pr-origin-agent {
+  color: var(--fgColor-severe, #bc4c00);
+  border-color: var(--borderColor-severe-emphasis, #bc4c00);
+}
+
+.pr-origin-gh-cli,
+.pr-origin-api {
+  color: var(--fgColor-accent, #0969da);
+  border-color: var(--borderColor-accent-emphasis, #0969da);
+}
+
+.pr-origin-bot,
+.pr-origin-unknown {
+  color: var(--fgColor-muted, #59636e);
+  border-color: var(--borderColor-default, #d1d9e0);
+}
+
+.pr-origin-notice {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  max-width: 440px;
+  padding: 12px 40px 12px 16px;
+  color: var(--fgColor-default, #1f2328);
+  background: var(--bgColor-default, #ffffff);
+  border: 1px solid var(--borderColor-danger-emphasis, #cf222e);
+  border-radius: 6px;
+  box-shadow: var(--shadow-floating-small, 0 6px 12px rgba(0, 0, 0, 0.15));
+  font-size: 14px;
+}
+
+.pr-origin-notice-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 0 4px;
+  color: var(--fgColor-muted, #59636e);
+  background: none;
+  border: 0;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}

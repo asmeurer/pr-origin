@@ -70,6 +70,44 @@ downloaded JSON export instead of querying github.com, and needs no cookie:
 
     pr-origin --export export-sympy-1790100396.json 30548
 
+## Browser extension
+
+The `extension/` directory is a Chrome extension that labels the pull
+requests in GitHub's pull request lists, such as
+https://github.com/sympy/sympy/pulls, with the client that opened them.
+Pull requests opened via the API get a label such as `GitHub CLI` or
+`agent: claude-code`. Hover over a label to see the user agent and the
+authentication type. Pull requests opened in a browser get no label, and ones
+with no audit log entry, usually because they are older than the audit log
+retention period, are labeled `origin unknown`.
+
+On a pull request page, the extension also labels the pull request
+description, reviews, and review comments (the comments on lines of code, on
+both the Conversation and Files changed tabs). Reviews and review comments are
+only labeled when the audit log shows that they were created through the API.
+An unlabeled review or review comment was usually posted in a browser, but
+not always: GitHub logs no review submission for a review that is created
+through the API together with its comments, and it can leave some of the
+comments in a large API review out of the log. In one such review, only 24 of
+the 49 comments were logged.
+
+Issues and ordinary comments, on issues or on pull requests, are never
+labeled. The audit log has no events for creating them.
+
+To install it, open `chrome://extensions`, turn on Developer mode, click
+"Load unpacked", and select the `extension` directory. The extension needs
+no cookie setup. It reads the same audit log page as the command line tool,
+using the GitHub session of the browser, so it only labels pull requests in
+organizations that you are an owner of. It skips other organizations, and
+checks them again a day later.
+
+Each page of the list usually takes one or two audit log requests, and a pull
+request page takes about one request per burst of review activity. Results
+are cached in the extension's local storage, so anything that has already
+been looked up is labeled immediately. If GitHub asks you to confirm access to
+the audit log, the extension shows a notice with a link to the audit log page.
+Confirm access there, then reload the page.
+
 ## Classification
 
 | Kind      | Meaning                                                                 |

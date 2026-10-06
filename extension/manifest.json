@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "pr-origin",
+  "version": "0.1.0",
+  "description": "Label GitHub pull requests, reviews, and review comments with the client that created them, read from the organization audit log.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}
