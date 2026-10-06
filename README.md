@@ -95,8 +95,10 @@ Issues and ordinary comments, on issues or on pull requests, are never
 labeled. The audit log has no events for creating them.
 
 To install it, open `chrome://extensions`, turn on Developer mode, click
-"Load unpacked", and select the `extension` directory. The extension needs
-no cookie setup. It reads the same audit log page as the command line tool,
+"Load unpacked", and select the `extension` directory. When loaded unpacked,
+the extension checks its files every second, and when they change it reloads
+itself and any open github.com tabs, so edits take effect without another
+visit to `chrome://extensions`. The extension needs no cookie setup. It reads the same audit log page as the command line tool,
 using the GitHub session of the browser, so it only labels pull requests in
 organizations that you are an owner of. It skips other organizations, and
 checks them again a day later.
