@@ -52,6 +52,13 @@ BROWSERS = (
     "opera", "opera_gx", "safari", "vivaldi",
 )
 GITHUB_CLI_OAUTH_APP_ID = "1157143"
+# The GitHub Mobile apps use the API with tokens for their own OAuth apps.
+# Their user agents look like "GitHub/1.275.0 (com.github.stormbreaker.prod;
+# ...)" on iOS and "GitHub/1.269.0 (com.github.android; ...)" on Android.
+GITHUB_MOBILE_OAUTH_APPS = {
+    "1079828": "GitHub Mobile for iOS",
+    "1119845": "GitHub Mobile for Android",
+}
 RESULTS_MARKER = "Filter audit logs"
 
 PR_URL_RE = re.compile(r"^https://github\.com/([^/]+/[^/]+)/pull/(\d+)")
@@ -82,8 +89,9 @@ def classify(entry):
     """
     Return (kind, description) for an audit log entry.
 
-    kind is one of "browser", "gh-cli", "agent", "api", or "bot". Everything
-    except "browser" was opened through the API.
+    kind is one of "browser", "mobile", "gh-cli", "agent", "api", or "bot".
+    Everything except "browser" and "mobile", which are a person using
+    GitHub's website or mobile app, was opened through the API.
     """
     user_agent = entry.get("user_agent") or ""
     access_type = entry.get("programmatic_access_type")
@@ -94,6 +102,9 @@ def classify(entry):
         return "agent", f'AI agent "{agent.group(1)}" driving the GitHub CLI'
     if user_agent.startswith("GitHub CLI"):
         return "gh-cli", "GitHub CLI"
+    mobile_app = GITHUB_MOBILE_OAUTH_APPS.get(str(entry.get("oauth_application_id")))
+    if mobile_app:
+        return "mobile", mobile_app
     if access_type:
         return "api", f"API client, {access_type}"
     if not user_agent.startswith("Mozilla/"):
@@ -110,6 +121,8 @@ def describe_auth(entry):
         return access_type
     if str(app_id) == GITHUB_CLI_OAUTH_APP_ID:
         return f"{access_type} (GitHub CLI OAuth app)"
+    if str(app_id) in GITHUB_MOBILE_OAUTH_APPS:
+        return f"{access_type} ({GITHUB_MOBILE_OAUTH_APPS[str(app_id)]} OAuth app)"
     return f"{access_type} (OAuth app {app_id})"
 
 
@@ -216,7 +229,7 @@ def summarize(repo, number, entry):
         "actor": entry.get("actor"),
         "title": entry.get("pull_request_title"),
         "kind": kind,
-        "via_api": kind != "browser",
+        "via_api": kind not in ("browser", "mobile"),
         "description": description,
         "auth": describe_auth(entry),
         "user_agent": entry.get("user_agent"),
@@ -224,7 +237,9 @@ def summarize(repo, number, entry):
 
 
 def print_summary(summary):
-    if summary["via_api"]:
+    if summary["kind"] == "mobile":
+        how = f"in {summary['description']}"
+    elif summary["via_api"]:
         how = f"via the API ({summary['description']})"
     else:
         how = "in a browser"

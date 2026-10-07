@@ -122,6 +122,10 @@ def test_unexpected_response_raises(response):
         pr_origin.find_entry_online(session, "sympy/sympy", 1)
 
 
+IOS_USER_AGENT = "GitHub/1.275.0 (com.github.stormbreaker.prod; build:203825250; iOS 26.6.0; iPhone12,1)"
+ANDROID_USER_AGENT = "GitHub/1.269.0 (com.github.android; build:939; Android 16; moto g - 2026)"
+
+
 @pytest.mark.parametrize("entry, kind", [
     ({"user_agent": "Mozilla/5.0 (X11; Linux x86_64) Firefox/152"}, "browser"),
     ({"user_agent": "GitHub CLI 2.93.0", "programmatic_access_type": "OAuth access token"}, "gh-cli"),
@@ -130,9 +134,26 @@ def test_unexpected_response_raises(response):
     ({"user_agent": "curl/7.81.0"}, "api"),
     ({"user_agent": "dependabot-api", "actor_is_bot": "true"}, "bot"),
     ({"user_agent": "Faraday v2.14.1", "actor_is_bot": True}, "bot"),
+    ({"user_agent": IOS_USER_AGENT, "programmatic_access_type": "OAuth access token",
+      "oauth_application_id": "1079828"}, "mobile"),
+    ({"user_agent": ANDROID_USER_AGENT, "programmatic_access_type": "OAuth access token",
+      "oauth_application_id": 1119845}, "mobile"),
+    # A script can send the mobile app's user agent, but not use its token.
+    ({"user_agent": IOS_USER_AGENT, "programmatic_access_type": "Personal access token (classic)"}, "api"),
 ])
 def test_classify(entry, kind):
     assert pr_origin.classify(entry)[0] == kind
+
+
+def test_mobile_app_is_not_reported_as_api(capsys):
+    entry = {"actor": "alice", "user_agent": IOS_USER_AGENT,
+             "programmatic_access_type": "OAuth access token", "oauth_application_id": "1079828"}
+    summary = pr_origin.summarize("sympy/sympy", 1, entry)
+    assert summary["kind"] == "mobile"
+    assert summary["via_api"] is False
+    assert summary["auth"] == "OAuth access token (GitHub Mobile for iOS OAuth app)"
+    pr_origin.print_summary(summary)
+    assert "sympy/sympy#1 by alice: opened in GitHub Mobile for iOS" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("reference, expected", [

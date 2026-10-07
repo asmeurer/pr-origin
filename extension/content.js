@@ -1,8 +1,8 @@
 /*
  * Label pull requests, pull request reviews, and review comments on GitHub
- * with the client that created them: a browser, the GitHub CLI, an AI agent
- * driving the GitHub CLI, or some other API client. This is the same lookup
- * as ../pr_origin.py.
+ * with the client that created them: a browser, the GitHub mobile app, the
+ * GitHub CLI, an AI agent driving the GitHub CLI, or some other API client.
+ * This is the same lookup as ../pr_origin.py.
  *
  * The data comes from the organization audit log. The audit log results
  * page is fetched with the browser's own GitHub session, so this only works
@@ -17,6 +17,11 @@
 
 const AGENT_RE = /\bAgent\/(\S+)/;
 const GITHUB_CLI_OAUTH_APP_ID = "1157143";
+// The GitHub Mobile apps use the API with tokens for their own OAuth apps.
+const GITHUB_MOBILE_OAUTH_APPS = {
+  1079828: "GitHub Mobile for iOS",
+  1119845: "GitHub Mobile for Android",
+};
 const RESULTS_MARKER = "Filter audit logs";
 const PR_URL_RE = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)(?:[/?#]|$)/;
 const PR_PATH_RE = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/;
@@ -60,9 +65,19 @@ const ITEM_TYPES = {
   },
 };
 
-// recordKey(type, id) -> {kind, description, agent, auth, userAgent, actor}
-// for an item that was found in the audit log, or {missing, checked, final}
-// for one that was not. This mirrors chrome.storage.local.
+// The fields of an audit log entry that classify() and describeAuth() use.
+const ENTRY_FIELDS = [
+  "actor_is_bot",
+  "oauth_application_id",
+  "programmatic_access_type",
+  "user_agent",
+];
+
+// recordKey(type, id) -> {entry} for an item that was found in the audit
+// log, where entry has the ENTRY_FIELDS of its audit log entry, or
+// {missing, checked, final} for one that was not. Entries are classified
+// when they are shown, so that changes to classify() also apply to stored
+// records. This mirrors chrome.storage.local.
 const records = new Map();
 const readFromStorage = new Set();
 const pending = new Set();
@@ -108,8 +123,9 @@ function parseTime(datetime) {
 }
 
 // Return [kind, description] for an audit log entry. kind is one of
-// "browser", "gh-cli", "agent", "api", or "bot". Everything except "browser"
-// was created through the API.
+// "browser", "mobile", "gh-cli", "agent", "api", or "bot". Everything except
+// "browser" and "mobile", which are a person using GitHub's website or
+// mobile app, was created through the API.
 function classify(entry) {
   const userAgent = entry.user_agent || "";
   const accessType = entry.programmatic_access_type;
@@ -122,6 +138,10 @@ function classify(entry) {
   }
   if (userAgent.startsWith("GitHub CLI")) {
     return ["gh-cli", "GitHub CLI"];
+  }
+  const appId = entry.oauth_application_id;
+  if (Object.hasOwn(GITHUB_MOBILE_OAUTH_APPS, appId)) {
+    return ["mobile", GITHUB_MOBILE_OAUTH_APPS[appId]];
   }
   if (accessType) {
     return ["api", `API client, ${accessType}`];
@@ -144,6 +164,9 @@ function describeAuth(entry) {
   if (appId === GITHUB_CLI_OAUTH_APP_ID) {
     return `${accessType} (GitHub CLI OAuth app)`;
   }
+  if (Object.hasOwn(GITHUB_MOBILE_OAUTH_APPS, appId)) {
+    return `${accessType} (${GITHUB_MOBILE_OAUTH_APPS[appId]} OAuth app)`;
+  }
   return `${accessType} (OAuth app ${appId})`;
 }
 
@@ -155,7 +178,6 @@ function summarize(entry) {
     agent: AGENT_RE.exec(entry.user_agent || "")?.[1] ?? null,
     auth: describeAuth(entry),
     userAgent: entry.user_agent,
-    actor: entry.actor,
   };
 }
 
@@ -219,15 +241,19 @@ async function fetchPage(org, query, after) {
 }
 
 function isFound(key) {
-  const record = records.get(key);
-  return record !== undefined && !record.missing;
+  return records.get(key)?.entry !== undefined;
 }
 
 function isFresh(record) {
   if (record === undefined) {
     return false;
   }
-  return !record.missing || record.final || Date.now() - record.checked < MISSING_RETRY;
+  if (record.missing) {
+    return record.final || Date.now() - record.checked < MISSING_RETRY;
+  }
+  // Records stored by older versions of the extension have no entry, so
+  // they are looked up again.
+  return record.entry !== undefined;
 }
 
 async function remember(entries) {
@@ -237,7 +263,9 @@ async function remember(entries) {
     if (key === null) {
       continue;
     }
-    const record = summarize(entry);
+    const record = {
+      entry: Object.fromEntries(ENTRY_FIELDS.map(field => [field, entry[field] ?? null])),
+    };
     records.set(key, record);
     items[key] = record;
   }
@@ -500,7 +528,8 @@ function labelFor(item, record) {
   if (record.missing) {
     // Reviews and review comments only get a label when they are known to
     // have been created through the API. Pull requests are labeled either
-    // way, so that a missing label means "opened in a browser".
+    // way, so that a missing label means "opened by a person in a browser or
+    // the GitHub mobile app".
     if (item.type !== "pr") {
       return null;
     }
@@ -512,22 +541,27 @@ function labelFor(item, record) {
         "period.",
     };
   }
-  // Claude Code appends its version, as in "claude-code_2-1-278_agent".
+  if (record.entry === undefined) {
+    return null;
+  }
+  const summary = summarize(record.entry);
+  // Claude Code appends its version, as in "claude-code_2-1-278_agent". The
+  // "browser" and "mobile" kinds get no label.
   const text = {
-    agent: `agent: ${record.agent?.split("_")[0]}`,
+    agent: `agent: ${summary.agent?.split("_")[0]}`,
     "gh-cli": "GitHub CLI",
     api: "API",
     bot: "bot",
-  }[record.kind];
+  }[summary.kind];
   if (text === undefined) {
     return null;
   }
   return {
-    kind: record.kind,
+    kind: summary.kind,
     text,
-    title: `${verb} via the API: ${record.description}\n` +
-      `User agent: ${record.userAgent}\n` +
-      `Auth: ${record.auth}\n` +
+    title: `${verb} via the API: ${summary.description}\n` +
+      `User agent: ${summary.userAgent}\n` +
+      `Auth: ${summary.auth}\n` +
       "(pr-origin, from the organization audit log)",
   };
 }

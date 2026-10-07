@@ -77,16 +77,16 @@ requests in GitHub's pull request lists, such as
 https://github.com/sympy/sympy/pulls, with the client that opened them.
 Pull requests opened via the API get a label such as `GitHub CLI` or
 `agent: claude-code`. Hover over a label to see the user agent and the
-authentication type. Pull requests opened in a browser get no label, and ones
-with no audit log entry, usually because they are older than the audit log
-retention period, are labeled `origin unknown`.
+authentication type. Pull requests opened in a browser or the GitHub mobile
+app get no label, and ones with no audit log entry, usually because they are
+older than the audit log retention period, are labeled `origin unknown`.
 
 On a pull request page, the extension also labels the pull request
 description, reviews, and review comments (the comments on lines of code, on
 both the Conversation and Files changed tabs). Reviews and review comments are
 only labeled when the audit log shows that they were created through the API.
-An unlabeled review or review comment was usually posted in a browser, but
-not always: GitHub logs no review submission for a review that is created
+An unlabeled review or review comment was usually posted in a browser or the
+mobile app, but not always: GitHub logs no review submission for a review that is created
 through the API together with its comments, and it can leave some of the
 comments in a large API review out of the log. In one such review, only 24 of
 the 49 comments were logged.
@@ -98,10 +98,10 @@ To install it, open `chrome://extensions`, turn on Developer mode, click
 "Load unpacked", and select the `extension` directory. When loaded unpacked,
 the extension checks its files every second, and when they change it reloads
 itself and any open github.com tabs, so edits take effect without another
-visit to `chrome://extensions`. The extension needs no cookie setup. It reads the same audit log page as the command line tool,
-using the GitHub session of the browser, so it only labels pull requests in
-organizations that you are an owner of. It skips other organizations, and
-checks them again a day later.
+visit to `chrome://extensions`. The extension needs no cookie setup. It reads
+the same audit log page as the command line tool, using the GitHub session of
+the browser, so it only labels pull requests in organizations that you are an
+owner of. It skips other organizations, and checks them again a day later.
 
 Each page of the list usually takes one or two audit log requests, and a pull
 request page takes about one request per burst of review activity. Results
@@ -115,13 +115,16 @@ Confirm access there, then reload the page.
 | Kind      | Meaning                                                                 |
 |-----------|-------------------------------------------------------------------------|
 | `browser` | Browser user agent with a normal web session                            |
+| `mobile`  | GitHub mobile app for iOS or Android, using a token for its OAuth app   |
 | `gh-cli`  | GitHub CLI                                                              |
 | `agent`   | GitHub CLI run by an AI agent (the user agent has an `Agent/...` suffix) |
 | `api`     | Any other token-authenticated or non-browser client                     |
 | `bot`     | Bot account such as Dependabot                                          |
 
-Everything except `browser` is reported as opened via the API. A request that
-uses a token is classified as `api` even if it sends a browser user agent.
+Everything except `browser` and `mobile`, which are a person using GitHub's
+website or mobile app, is reported as opened via the API. A request that uses
+a token is classified as `api` even if it sends a browser user agent, or a
+mobile app user agent with a token that is not for the mobile app.
 
 The `Agent/...` suffix comes from the GitHub CLI itself, which detects agents
 such as Claude Code, Codex, and OpenCode from their environment variables and
